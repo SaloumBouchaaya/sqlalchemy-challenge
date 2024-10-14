@@ -1,0 +1,100 @@
+import numpy as np
+import sqlalchemy
+from sqlalchemy.ext.automap import automap_base
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, func
+from flask import Flask, jsonify
+from datetime import datetime as dt
+
+engine = create_engine("sqlite:///Resources/hawaii.sqlite")
+
+Base = automap_base()
+Base.prepare(autoload_with=engine)
+Station=Base.classes.station
+Measurement=Base.classes.measurement
+
+session=Session(engine)
+
+climate_app= Flask(__name__)
+
+@climate_app.route("/")
+def home():
+    """List all available routes."""
+    return jsonify({
+        "Available Routes": [
+            "/api/v1.0/stations",
+            "/api/v1.0/measurements",
+            "/api/v1.0/precipitation",
+            "/api/v1.0/tobs",
+            "/api/v1.0/<start>",
+            "/api/v1.0/<start>/<end>"]})
+
+
+@climate_app.route("/api/v1.0/precipitation")
+def precipitation():
+    """Return precipitation data for the last 12 months."""
+    most_recent_date_subquery = session.query(func.max(Measurement.date)).scalar()
+    prcp_scores = session.query(Measurement.date, Measurement.prcp).filter(
+        Measurement.date >= func.date(most_recent_date_subquery, '-12 months')
+    ).all()
+
+    precipitation_dict = {date: prcp for date, prcp in prcp_scores}
+    return jsonify(precipitation_dict)
+
+@climate_app.route("/api/v1.0/stations")
+def stations():
+    """Return a JSON list of stations from the dataset."""
+    results = session.query(Station.station, Station.name).all()
+    stations_list = [{"station_id": station, "name": name} for station, name in results]
+    return jsonify(stations_list)
+
+@climate_app.route("/api/v1.0/tobs")
+def tobs():
+    """Return a JSON list of temperature observations for the previous year."""
+    most_recent_date_subquery = session.query(func.max(Measurement.date)).scalar()
+    most_recent_date = dt.strptime(most_recent_date_subquery, '%Y-%m-%d')
+    one_year = most_recent_date.replace(year=most_recent_date.year - 1)
+    most_active_station_id = session.query(Measurement.station).\
+        group_by(Measurement.station).\
+        order_by(func.count(Measurement.station).desc()).\
+        first()[0]
+    tobs_data = session.query(Measurement.tobs).filter(
+        Measurement.station == most_active_station_id,
+        Measurement.date >= one_year
+    ).all()
+    tobs_list = [tobs[0] for tobs in tobs_data]
+    return jsonify(tobs_list)
+
+@climate_app.route('/api/v1.0/<start>')
+def get_temperature_start(start):
+    session = Session(bind=engine)
+    results = session.query(
+        func.min(Measurement.tobs),
+        func.avg(Measurement.tobs),
+        func.max(Measurement.tobs)).filter(Measurement.date >= start).all()
+    session.close()
+    temperature_data = {
+        "TMIN": results[0][0],
+        "TAVG": results[0][1],
+        "TMAX": results[0][2]}
+    return jsonify(temperature_data)
+
+@climate_app.route('/api/v1.0/<start>/<end>')
+def get_temperature_start_end(start, end):
+    session = Session(bind=engine)
+    results = session.query(
+        func.min(Measurement.tobs),
+        func.avg(Measurement.tobs),
+        func.max(Measurement.tobs)
+    ).filter(Measurement.date >= start).filter(Measurement.date <= end).all()
+    session.close()
+    temperature_data = {
+        "TMIN": results[0][0],
+        "TAVG": results[0][1],
+        "TMAX": results[0][2]}
+    return jsonify(temperature_data)
+
+
+
+if __name__ == "__main__":
+    climate_app.run(debug=True)
